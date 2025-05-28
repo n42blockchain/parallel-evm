@@ -34,8 +34,22 @@ This project targets developers, researchers, and infrastructure builders seekin
 - Git
 
 ### Clone and Build
-
 ```bash
+
 git clone https://github.com/yourusername/parallel-evm.git
 cd parallel-evm
 go build -o parallel-evm
+```
+### Run
+
+```bash
+
+./parallel-evm --config=config.yaml
+```
+### 🧪 Running Tests
+
+```bash
+
+go test ./...
+```
+
