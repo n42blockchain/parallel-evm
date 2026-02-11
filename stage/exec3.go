@@ -26,13 +26,6 @@ import (
 	"time"
 )
 
-//var ExecStepsInDB = metrics.NewCounter(`exec_steps_in_db`) //nolint
-//var ExecRepeats = metrics.NewCounter(`exec_repeats`)       //nolint
-//var ExecTriggers = metrics.NewCounter(`exec_triggers`)
-
-var ExecStepsInDB = &atomic.Uint64{}
-var ExecRepeats = &atomic.Uint64{}
-var ExecTriggers = &atomic.Uint64{}
 
 func NewProgress(prevOutputBlockNum, commitThreshold uint64, workersCount int, logPrefix string) *Progress {
 	return &Progress{prevTime: time.Now(), prevOutputBlockNum: prevOutputBlockNum, commitThreshold: commitThreshold, workersCount: workersCount, logPrefix: logPrefix}
@@ -44,6 +37,9 @@ type Progress struct {
 	prevOutputBlockNum uint64
 	prevRepeatCount    uint64
 	commitThreshold    uint64
+
+	ExecRepeats  atomic.Uint64
+	ExecTriggers atomic.Uint64
 
 	workersCount int
 	logPrefix    string
@@ -227,8 +223,8 @@ func ExecV3(ctx context.Context,
 				return err
 			}
 
-			ExecRepeats.Add(uint64(conflicts))
-			ExecTriggers.Add(uint64(triggers))
+			progress.ExecRepeats.Add(uint64(conflicts))
+			progress.ExecTriggers.Add(uint64(triggers))
 			if processedBlockNum > lastBlockNum {
 				outputBlockNum.Store(processedBlockNum)
 				lastBlockNum = processedBlockNum
@@ -250,7 +246,7 @@ func ExecV3(ctx context.Context,
 		}
 	}
 
-	var rwLoopErrCh chan error
+	rwLoopErrCh := make(chan error, 1)
 
 	var rwLoopG *errgroup.Group
 	if parallel {
@@ -260,7 +256,7 @@ func ExecV3(ctx context.Context,
 			if err != nil {
 				return err
 			}
-			defer tx.Rollback()
+			defer func() { tx.Rollback() }() // closure captures variable, always cleans up latest tx
 
 			//agg.SetTx(tx)
 			//if dbg.DiscardHistory() {
@@ -271,7 +267,7 @@ func ExecV3(ctx context.Context,
 
 			defer applyLoopWg.Wait()
 			applyCtx, cancelApplyCtx := context.WithCancel(ctx)
-			defer cancelApplyCtx()
+			defer func() { cancelApplyCtx() }() // closure captures variable, always cleans up latest cancel
 			applyLoopWg.Add(1)
 			go applyLoop(applyCtx, rwLoopErrCh)
 			for outputTxNum.Load() <= maxTxNum {
@@ -281,7 +277,7 @@ func ExecV3(ctx context.Context,
 
 				case <-logEvery.C:
 					stepsInDB := rawdbhelpers.IdxStepsCountV3(tx)
-					progress.Log(rs, in, rws, rs.DoneCount(), inputBlockNum.Load(), outputBlockNum.Load(), outputTxNum.Load(), ExecRepeats.Load(), stepsInDB)
+					progress.Log(rs, in, rws, rs.DoneCount(), inputBlockNum.Load(), outputBlockNum.Load(), outputTxNum.Load(), progress.ExecRepeats.Load(), stepsInDB)
 					//if agg.HasBackgroundFilesBuild() {
 					//	log.Info(fmt.Sprintf("[%s] Background files build", logPrefix), "progress", agg.BackgroundProgress())
 					//}
@@ -311,15 +307,17 @@ func ExecV3(ctx context.Context,
 							rws.DrainNonBlocking()
 							applyWorker.ResetTx(tx)
 
-							resIt := rws.Iter()
-							processedTxNum, conflicts, triggers, processedBlockNum, stoppedAtBlockEnd, err := processResultQueue(in, resIt, outputTxNum.Load(), rs, nil, tx, nil, applyWorker, false, true)
+							processedTxNum, conflicts, triggers, processedBlockNum, stoppedAtBlockEnd, err := func() (uint64, int, int, uint64, bool, error) {
+								resIt := rws.Iter()
+								defer resIt.Close()
+								return processResultQueue(in, resIt, outputTxNum.Load(), rs, nil, tx, nil, applyWorker, false, true)
+							}()
 							if err != nil {
 								return err
 							}
-							resIt.Close() //TODO: in defer
 
-							ExecRepeats.Add(uint64(conflicts))
-							ExecTriggers.Add(uint64(triggers))
+							progress.ExecRepeats.Add(uint64(conflicts))
+							progress.ExecTriggers.Add(uint64(triggers))
 							if processedBlockNum > 0 {
 								outputBlockNum.Store(processedBlockNum)
 							}
@@ -381,11 +379,11 @@ func ExecV3(ctx context.Context,
 					if tx, err = chainDb.BeginRw(ctx); err != nil {
 						return err
 					}
-					defer tx.Rollback()
+					// No defer here: function-level defer closure handles cleanup of latest tx
 					//agg.SetTx(tx)
 
 					applyCtx, cancelApplyCtx = context.WithCancel(ctx)
-					defer cancelApplyCtx()
+					// No defer here: function-level defer closure handles cleanup of latest cancel
 					applyLoopWg.Add(1)
 					go applyLoop(applyCtx, rwLoopErrCh)
 
@@ -435,13 +433,15 @@ func ExecV3(ctx context.Context,
 				}
 				return nil
 			}); err != nil {
-				panic(err)
+				log.Error("getHeaderFunc failed", "hash", hash, "number", number, "err", err)
+				return nil
 			}
 			return h
 		} else {
 			h, err = blockReader.Header(ctx, applyTx, hash, number)
 			if err != nil {
-				panic(err)
+				log.Error("getHeaderFunc failed", "hash", hash, "number", number, "err", err)
+				return nil
 			}
 			return h
 		}
@@ -595,7 +595,7 @@ Loop:
 				if err := rs.ApplyState(applyTx, txTask, nil); err != nil {
 					return fmt.Errorf("StateV3.Apply: %w", err)
 				}
-				ExecTriggers.Add(uint64(rs.CommitTxNum(txTask.Sender, txTask.TxNum, in)))
+				progress.ExecTriggers.Add(uint64(rs.CommitTxNum(txTask.Sender, txTask.TxNum, in)))
 				outputTxNum.Add(1)
 
 				//	if err := rs.ApplyHistory(txTask, agg); err != nil {
@@ -612,7 +612,7 @@ Loop:
 			select {
 			case <-logEvery.C:
 				stepsInDB := rawdbhelpers.IdxStepsCountV3(applyTx)
-				progress.Log(rs, in, rws, count, inputBlockNum.Load(), outputBlockNum.Load(), outputTxNum.Load(), ExecRepeats.Load(), stepsInDB)
+				progress.Log(rs, in, rws, count, inputBlockNum.Load(), outputBlockNum.Load(), outputTxNum.Load(), progress.ExecRepeats.Load(), stepsInDB)
 				if rs.SizeEstimate() < commitThreshold {
 					break
 				}

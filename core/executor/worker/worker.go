@@ -74,7 +74,8 @@ func NewWorker(lock sync.Locker, ctx context.Context, background bool, chainDb k
 	w.getHeader = func(hash libcommon.Hash, number uint64) *types.Header {
 		h, err := blockReader.Header(ctx, w.chainTx, hash, number)
 		if err != nil {
-			panic(err)
+			log.Error("getHeader failed", "hash", hash, "number", number, "err", err)
+			return nil
 		}
 		return h
 	}
@@ -94,7 +95,7 @@ func (rw *Worker) ResetTx(chainTx kv.Tx) {
 	if chainTx != nil {
 		rw.chainTx = chainTx
 		rw.stateReader.SetTx(rw.chainTx)
-		rw.chain = ChainReader{config: rw.chainConfig, tx: rw.chainTx, blockReader: rw.blockReader}
+		rw.chain = ChainReader{config: rw.chainConfig, tx: rw.chainTx, blockReader: rw.blockReader, ctx: rw.ctx}
 	}
 }
 
@@ -118,10 +119,11 @@ func (rw *Worker) RunTxTaskNoLock(txTask *task.TxTask) {
 	if rw.background && rw.chainTx == nil {
 		var err error
 		if rw.chainTx, err = rw.chainDb.BeginRo(rw.ctx); err != nil {
-			panic(err)
+			txTask.Error = err
+			return
 		}
 		rw.stateReader.SetTx(rw.chainTx)
-		rw.chain = ChainReader{config: rw.chainConfig, tx: rw.chainTx, blockReader: rw.blockReader}
+		rw.chain = ChainReader{config: rw.chainConfig, tx: rw.chainTx, blockReader: rw.blockReader, ctx: rw.ctx}
 	}
 	txTask.Error = nil
 	rw.stateReader.SetTxNum(txTask.TxNum)
@@ -144,7 +146,8 @@ func (rw *Worker) RunTxTaskNoLock(txTask *task.TxTask) {
 		// Genesis block
 		_, ibs, err = core.GenesisToBlock(rw.genesis, "")
 		if err != nil {
-			panic(err)
+			txTask.Error = err
+			return
 		}
 		// For Genesis, rules should be empty, so that empty accounts can be included
 		rules = &chain.Rules{}
@@ -214,14 +217,16 @@ func (rw *Worker) RunTxTaskNoLock(txTask *task.TxTask) {
 	if txTask.Error == nil {
 		txTask.BalanceIncreaseSet = ibs.BalanceIncreaseSet()
 		if err = ibs.MakeWriteSet(rules, rw.stateWriter); err != nil {
-			panic(err)
+			txTask.Error = err
+			return
 		}
 		txTask.ReadLists = rw.stateReader.ReadSet()
 		txTask.WriteLists = rw.stateWriter.WriteSet()
 		txTask.AccountPrevs, txTask.AccountDels, txTask.StoragePrevs, txTask.CodePrevs = rw.stateWriter.PrevAndDels()
 
 		if txTask.AcChangeSet, txTask.StChangeSet, err = rw.stateWriter.ChangeSet(); nil != err && !errors.Is(err, state.NoChangeSet) {
-			panic(err)
+			txTask.Error = err
+			return
 		}
 	}
 }
@@ -230,24 +235,32 @@ type ChainReader struct {
 	config      *chain.Config
 	tx          kv.Tx
 	blockReader interfaces.FullBlockReader
+	ctx         context.Context
 }
 
 func NewChainReader(config *chain.Config, tx kv.Tx, blockReader interfaces.FullBlockReader) ChainReader {
-	return ChainReader{config: config, tx: tx, blockReader: blockReader}
+	return ChainReader{config: config, tx: tx, blockReader: blockReader, ctx: context.Background()}
 }
 
 func (cr ChainReader) Config() *chain.Config        { return cr.config }
-func (cr ChainReader) CurrentHeader() *types.Header { panic("") }
+// CurrentHeader is not used in parallel execution path; returns nil as a safe default.
+func (cr ChainReader) CurrentHeader() *types.Header { return nil }
 func (cr ChainReader) GetHeader(hash libcommon.Hash, number uint64) *types.Header {
 	if cr.blockReader != nil {
-		h, _ := cr.blockReader.Header(context.Background(), cr.tx, hash, number)
+		h, err := cr.blockReader.Header(cr.ctx, cr.tx, hash, number)
+		if err != nil {
+			log.Error("ChainReader.GetHeader failed", "hash", hash, "number", number, "err", err)
+		}
 		return h
 	}
 	return rawdb.ReadHeader(cr.tx, hash, number)
 }
 func (cr ChainReader) GetHeaderByNumber(number uint64) *types.Header {
 	if cr.blockReader != nil {
-		h, _ := cr.blockReader.HeaderByNumber(context.Background(), cr.tx, number)
+		h, err := cr.blockReader.HeaderByNumber(cr.ctx, cr.tx, number)
+		if err != nil {
+			log.Error("ChainReader.GetHeaderByNumber failed", "number", number, "err", err)
+		}
 		return h
 	}
 	return rawdb.ReadHeaderByNumber(cr.tx, number)
@@ -261,7 +274,10 @@ func (cr ChainReader) GetHeaderByHash(hash libcommon.Hash) *types.Header {
 		}
 		return cr.GetHeader(hash, *number)
 	}
-	h, _ := rawdb.ReadHeaderByHash(cr.tx, hash)
+	h, err := rawdb.ReadHeaderByHash(cr.tx, hash)
+	if err != nil {
+		log.Error("ChainReader.GetHeaderByHash failed", "hash", hash, "err", err)
+	}
 	return h
 }
 func (cr ChainReader) GetTd(hash libcommon.Hash, number uint64) *big.Int {

@@ -47,7 +47,8 @@ func main() {
 	logger.Info("Program starting", "args", os.Args)
 	db := app.OpenDB(dirs.Chaindata, logger, true, 2)
 	defer db.Close()
-	ctx, _ := app.RootContext()
+	ctx, cancel := app.RootContext()
+	defer cancel()
 	var batchSize datasize.ByteSize
 	app.Must(batchSize.UnmarshalText([]byte(batchSizeStr)))
 	pm, engine, chainConfig, vmConfig := app.NewSync(ctx, db, nil, chainName, batchSizeStr)

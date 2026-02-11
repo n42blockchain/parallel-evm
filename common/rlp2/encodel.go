@@ -121,7 +121,7 @@ func EncodeU64(i uint64, to []byte) int {
 
 func StringLen(sLen int) int {
 	switch {
-	case sLen > 56:
+	case sLen >= 56:
 		beLen := (bits.Len(uint(sLen)) + 7) / 8
 		return 1 + beLen + sLen
 	case sLen == 0:
@@ -134,7 +134,7 @@ func StringLen(sLen int) int {
 }
 func EncodeString(s []byte, to []byte) int {
 	switch {
-	case len(s) > 56:
+	case len(s) >= 56:
 		beLen := (bits.Len(uint(len(s))) + 7) / 8
 		binary.BigEndian.PutUint64(to[1:], uint64(len(s)))
 		_ = to[beLen+len(s)]
@@ -147,12 +147,13 @@ func EncodeString(s []byte, to []byte) int {
 		to[0] = 128
 		return 1
 	case len(s) == 1:
-		_ = to[1]
 		if s[0] >= 128 {
 			to[0] = 129
+			to[1] = s[0]
+			return 2
 		}
-		copy(to[1:], s)
-		return 1 + len(s)
+		to[0] = s[0]
+		return 1
 	default: // 1<s<56
 		_ = to[len(s)]
 		to[0] = byte(len(s)) + 128

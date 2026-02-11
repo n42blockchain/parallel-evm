@@ -34,9 +34,6 @@ const StorageTable = "Storage"
 
 var NoChangeSet = errors.New("no change set")
 
-// var ExecTxsDone = metrics.NewCounter(`exec_txs_done`)
-var ExecTxsDone = &atomic.Uint64{}
-
 type StateV3 struct {
 	lock           sync.RWMutex
 	sizeEstimate   int
@@ -53,6 +50,8 @@ type StateV3 struct {
 	tmpdir              string
 	applyPrevAccountBuf []byte // buffer for ApplyState. Doesn't need mutex because Apply is single-threaded
 	addrIncBuf          []byte // buffer for ApplyState. Doesn't need mutex because Apply is single-threaded
+
+	execTxsDone atomic.Uint64 // counter for committed tx tasks
 
 	AccChangeSets map[uint64]map[string][]byte // block -> account change sets
 	StChangeSets  map[uint64]map[string][]byte // block -> storage change sets
@@ -119,7 +118,7 @@ func (rs *StateV3) puts(table string, key string, val []byte) {
 		}
 		rs.chContractCode[key] = val
 	default:
-		panic(table)
+		panic(fmt.Sprintf("StateV3.puts: unknown table %q", table))
 	}
 }
 
@@ -131,6 +130,9 @@ func (rs *StateV3) Get(table string, key []byte) (v []byte, ok bool) {
 }
 
 func (rs *StateV3) get(table string, key []byte) (v []byte, ok bool) {
+	// SAFETY: zero-copy []byte→string for map lookup only.
+	// The string must NOT be retained beyond this function scope,
+	// as the underlying []byte may be reused.
 	keyS := *(*string)(unsafe.Pointer(&key))
 	switch table {
 	case StorageTable:
@@ -144,7 +146,7 @@ func (rs *StateV3) get(table string, key []byte) (v []byte, ok bool) {
 	case kv.PlainContractCode:
 		v, ok = rs.chContractCode[keyS]
 	default:
-		panic(table)
+		panic(fmt.Sprintf("StateV3.get: unknown table %q", table))
 	}
 	return v, ok
 }
@@ -317,13 +319,9 @@ func (rs *StateV3) resetTxTask(txTask *task.TxTask) {
 }
 
 func (rs *StateV3) RegisterSender(txTask *task.TxTask) bool {
-	//TODO: it deadlocks on panic, fix it
-	defer func() {
-		rec := recover()
-		if rec != nil {
-			fmt.Printf("panic?: %s,%s\n", rec, dbg.Stack())
-		}
-	}()
+	if txTask.Sender == nil {
+		return false
+	}
 	rs.triggerLock.Lock()
 	defer rs.triggerLock.Unlock()
 	lastTxNum, deferral := rs.senderTxNums[*txTask.Sender]
@@ -339,7 +337,7 @@ func (rs *StateV3) RegisterSender(txTask *task.TxTask) bool {
 }
 
 func (rs *StateV3) CommitTxNum(sender *common.Address, txNum uint64, in *task.QueueWithRetry) (count int) {
-	ExecTxsDone.Add(1)
+	rs.execTxsDone.Add(1)
 
 	rs.triggerLock.Lock()
 	defer rs.triggerLock.Unlock()
@@ -705,7 +703,7 @@ func (rs *StateV3) Unwind(ctx context.Context, tx kv.RwTx, txUnwindTo uint64, ag
 	return nil
 }
 
-func (rs *StateV3) DoneCount() uint64 { return ExecTxsDone.Load() }
+func (rs *StateV3) DoneCount() uint64 { return rs.execTxsDone.Load() }
 
 func (rs *StateV3) SizeEstimate() (r uint64) {
 	rs.lock.RLock()
@@ -994,7 +992,7 @@ func (r *StateReaderV3) ReadAccountData(address common.Address) (*accounts.Accou
 		return nil, err
 	}
 	if r.trace {
-		fmt.Printf("ReadAccountData [%x] => [nonce: %d, balance: %d, codeHash: %x], txNum: %d\n", address, a.Nonce, &a.Balance, a.CodeHash, r.txNum)
+		log.Debug("ReadAccountData", "address", address, "nonce", a.Nonce, "balance", &a.Balance, "codeHash", a.CodeHash, "txNum", r.txNum)
 	}
 	return &a, nil
 }
@@ -1014,11 +1012,7 @@ func (r *StateReaderV3) ReadAccountStorage(address common.Address, incarnation u
 		r.readLists[StorageTable].Vals = append(r.readLists[StorageTable].Vals, enc)
 	}
 	if r.trace {
-		if enc == nil {
-			fmt.Printf("ReadAccountStorage [%x] [%x] => [], txNum: %d\n", address, key.Bytes(), r.txNum)
-		} else {
-			fmt.Printf("ReadAccountStorage [%x] [%x] => [%x], txNum: %d\n", address, key.Bytes(), enc, r.txNum)
-		}
+		log.Debug("ReadAccountStorage", "address", address, "key", key.Bytes(), "enc", enc, "txNum", r.txNum)
 	}
 	if enc == nil {
 		return nil, nil
@@ -1041,7 +1035,7 @@ func (r *StateReaderV3) ReadAccountCode(address common.Address, incarnation uint
 		r.readLists[kv.Code].Vals = append(r.readLists[kv.Code].Vals, enc)
 	}
 	if r.trace {
-		fmt.Printf("ReadAccountCode [%x] => [%x], txNum: %d\n", address, enc, r.txNum)
+		log.Debug("ReadAccountCode", "address", address, "enc", enc, "txNum", r.txNum)
 	}
 	return enc, nil
 }
@@ -1064,7 +1058,7 @@ func (r *StateReaderV3) ReadAccountCodeSize(address common.Address, incarnation 
 	}
 	size := len(enc)
 	if r.trace {
-		fmt.Printf("ReadAccountCodeSize [%x] => [%d], txNum: %d\n", address, size, r.txNum)
+		log.Debug("ReadAccountCodeSize", "address", address, "size", size, "txNum", r.txNum)
 	}
 	return size, nil
 }
