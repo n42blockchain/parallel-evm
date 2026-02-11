@@ -28,6 +28,20 @@ var (
 	Num4  = uint256.NewInt(4)
 	Num8  = uint256.NewInt(8)
 	Num27 = uint256.NewInt(27)
+	Num28 = uint256.NewInt(28)
 	Num32 = uint256.NewInt(32)
 	Num35 = uint256.NewInt(35)
+	Num100 = uint256.NewInt(100)
+
+	// Aliases for compatibility with common2/u256
+	N0   = Num0
+	N1   = Num1
+	N2   = Num2
+	N4   = Num4
+	N8   = Num8
+	N27  = Num27
+	N28  = Num28
+	N32  = Num32
+	N35  = Num35
+	N100 = Num100
 )

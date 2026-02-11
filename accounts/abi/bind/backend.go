@@ -20,7 +20,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
-	evm "starlink-world/erigon-evm/ifs"
+	ethereum "starlink-world/erigon-evm/interfaces"
 
 	"starlink-world/erigon-evm/common"
 	"starlink-world/erigon-evm/core/types"

@@ -12,15 +12,15 @@ import (
 	"github.com/ledgerwatch/log/v3"
 	"golang.org/x/sync/errgroup"
 	"runtime"
-	"starlink-world/erigon-evm/cmd/state/exec22"
-	"starlink-world/erigon-evm/cmd/state/exec3"
+	"starlink-world/erigon-evm/core/executor/task"
+	"starlink-world/erigon-evm/core/executor/worker"
 	"starlink-world/erigon-evm/core"
 	"starlink-world/erigon-evm/core/rawdb"
 	"starlink-world/erigon-evm/core/rawdb/rawdbhelpers"
 	"starlink-world/erigon-evm/core/state"
 	"starlink-world/erigon-evm/core/types"
 	"starlink-world/erigon-evm/eth/ethconfig"
-	"starlink-world/erigon-evm/turbo/services"
+	"starlink-world/erigon-evm/interfaces"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,7 +49,7 @@ type Progress struct {
 	logPrefix    string
 }
 
-func (p *Progress) Log(rs *state.StateV3, in *exec22.QueueWithRetry, rws *exec22.ResultsQueue, doneCount, inputBlockNum, outputBlockNum, outTxNum, repeatCount uint64, idxStepsAmountInDB float64) {
+func (p *Progress) Log(rs *state.StateV3, in *task.QueueWithRetry, rws *task.ResultsQueue, doneCount, inputBlockNum, outputBlockNum, outTxNum, repeatCount uint64, idxStepsAmountInDB float64) {
 	var m runtime.MemStats
 	dbg.ReadMemStats(&m)
 	sizeEstimate := rs.SizeEstimate()
@@ -182,13 +182,13 @@ func ExecV3(ctx context.Context,
 	// Maybe need split channels? Maybe don't exit from ApplyLoop? Maybe current way is also ok?
 
 	// input queue
-	in := exec22.NewQueueWithRetry(100_000)
+	in := task.NewQueueWithRetry(100_000)
 	defer in.Close()
 
 	rwsConsumed := make(chan struct{}, 1)
 	defer close(rwsConsumed)
 
-	execWorkers, applyWorker, rws, stopWorkers, waitWorkers := exec3.NewWorkersPool(lock.RLocker(), ctx, parallel, chainDb, rs, in, blockReader, chainConfig, genesis, engine, workerCount+1)
+	execWorkers, applyWorker, rws, stopWorkers, waitWorkers := worker.NewWorkersPool(lock.RLocker(), ctx, parallel, chainDb, rs, in, blockReader, chainConfig, genesis, engine, workerCount+1)
 	defer stopWorkers()
 	applyWorker.DiscardReadList()
 
@@ -338,7 +338,7 @@ func ExecV3(ctx context.Context,
 						}
 
 						// Drain results channel because read sets do not carry over
-						rws.DropResults(func(txTask *exec22.TxTask) {
+						rws.DropResults(func(txTask *task.TxTask) {
 							rs.ReTry(txTask, in)
 						})
 
@@ -517,7 +517,7 @@ Loop:
 		for txIndex := -1; txIndex <= len(txs); txIndex++ {
 
 			// Do not oversend, wait for the result heap to go under certain size
-			txTask := &exec22.TxTask{
+			txTask := &task.TxTask{
 				BlockNum:        blockNum,
 				Header:          header,
 				Coinbase:        b.Coinbase(),
@@ -688,7 +688,7 @@ Loop:
 	return nil
 }
 
-func processResultQueue(in *exec22.QueueWithRetry, rws *exec22.ResultsQueueIter, outputTxNumIn uint64, rs *state.StateV3, agg *state2.AggregatorV3, applyTx kv.Tx, backPressure chan struct{}, applyWorker *exec3.Worker, canRetry, forceStopAtBlockEnd bool) (outputTxNum uint64, conflicts, triggers int, processedBlockNum uint64, stopedAtBlockEnd bool, err error) {
+func processResultQueue(in *task.QueueWithRetry, rws *task.ResultsQueueIter, outputTxNumIn uint64, rs *state.StateV3, agg *state2.AggregatorV3, applyTx kv.Tx, backPressure chan struct{}, applyWorker *worker.Worker, canRetry, forceStopAtBlockEnd bool) (outputTxNum uint64, conflicts, triggers int, processedBlockNum uint64, stopedAtBlockEnd bool, err error) {
 	var i int
 	outputTxNum = outputTxNumIn
 	for rws.HasNext(outputTxNum) {
@@ -734,7 +734,7 @@ func processResultQueue(in *exec22.QueueWithRetry, rws *exec22.ResultsQueueIter,
 	return
 }
 
-func blockWithSenders(db kv.RoDB, tx kv.Tx, blockReader services.BlockReader, blockNum uint64) (b *types.Block, err error) {
+func blockWithSenders(db kv.RoDB, tx kv.Tx, blockReader interfaces.BlockReader, blockNum uint64) (b *types.Block, err error) {
 	if tx == nil {
 		tx, err = db.BeginRo(context.Background())
 		if err != nil {

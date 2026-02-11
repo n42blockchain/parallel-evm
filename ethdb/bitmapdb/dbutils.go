@@ -10,7 +10,7 @@ import (
 	"github.com/c2h5oh/datasize"
 	"github.com/ledgerwatch/erigon-lib/kv"
 	"starlink-world/erigon-evm/common/math"
-	libcommon "starlink-world/erigon-evm/common2"
+	libcommon "starlink-world/erigon-evm/common"
 	"starlink-world/erigon-evm/ethdb"
 )
 

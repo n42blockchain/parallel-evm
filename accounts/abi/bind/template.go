@@ -91,7 +91,7 @@ import (
 	"math/big"
 	"strings"
 
-	"starlink-world/erigon-evm/ifs"
+	ethereum "starlink-world/erigon-evm/interfaces"
 	"starlink-world/erigon-evm/accounts/abi"
 	"starlink-world/erigon-evm/accounts/abi/bind"
 	"starlink-world/erigon-evm/common"

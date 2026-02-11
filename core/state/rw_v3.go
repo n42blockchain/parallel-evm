@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"github.com/ledgerwatch/erigon-lib/kv/temporal/historyv2"
 	"sort"
-	"starlink-world/erigon-evm/cmd/state/exec22"
+	"starlink-world/erigon-evm/core/executor/task"
 	"starlink-world/erigon-evm/common/dbutils"
 	"starlink-world/erigon-evm/core/types/accounts"
 	"starlink-world/erigon-evm/turbo/shards"
@@ -46,7 +46,7 @@ type StateV3 struct {
 	chIncs         map[string][]byte
 	chContractCode map[string][]byte
 
-	triggers     map[uint64]*exec22.TxTask
+	triggers     map[uint64]*task.TxTask
 	senderTxNums map[common.Address]uint64
 	triggerLock  sync.Mutex
 
@@ -61,7 +61,7 @@ type StateV3 struct {
 func NewStateV3(tmpdir string) *StateV3 {
 	rs := &StateV3{
 		tmpdir:         tmpdir,
-		triggers:       map[uint64]*exec22.TxTask{},
+		triggers:       map[uint64]*task.TxTask{},
 		senderTxNums:   map[common.Address]uint64{},
 		chCode:         map[string][]byte{},
 		chAccs:         map[string][]byte{},
@@ -288,15 +288,15 @@ func (rs *StateV3) Flush(ctx context.Context, rwTx kv.RwTx, logPrefix string, lo
 	return nil
 }
 
-func (rs *StateV3) ReTry(txTask *exec22.TxTask, in *exec22.QueueWithRetry) {
+func (rs *StateV3) ReTry(txTask *task.TxTask, in *task.QueueWithRetry) {
 	rs.resetTxTask(txTask)
 	in.ReTry(txTask)
 }
-func (rs *StateV3) AddWork(ctx context.Context, txTask *exec22.TxTask, in *exec22.QueueWithRetry) {
+func (rs *StateV3) AddWork(ctx context.Context, txTask *task.TxTask, in *task.QueueWithRetry) {
 	rs.resetTxTask(txTask)
 	in.Add(ctx, txTask)
 }
-func (rs *StateV3) resetTxTask(txTask *exec22.TxTask) {
+func (rs *StateV3) resetTxTask(txTask *task.TxTask) {
 	txTask.BalanceIncreaseSet = nil
 	returnReadList(txTask.ReadLists)
 	txTask.ReadLists = nil
@@ -316,7 +316,7 @@ func (rs *StateV3) resetTxTask(txTask *exec22.TxTask) {
 	*/
 }
 
-func (rs *StateV3) RegisterSender(txTask *exec22.TxTask) bool {
+func (rs *StateV3) RegisterSender(txTask *task.TxTask) bool {
 	//TODO: it deadlocks on panic, fix it
 	defer func() {
 		rec := recover()
@@ -338,7 +338,7 @@ func (rs *StateV3) RegisterSender(txTask *exec22.TxTask) bool {
 	return !deferral
 }
 
-func (rs *StateV3) CommitTxNum(sender *common.Address, txNum uint64, in *exec22.QueueWithRetry) (count int) {
+func (rs *StateV3) CommitTxNum(sender *common.Address, txNum uint64, in *task.QueueWithRetry) (count int) {
 	ExecTxsDone.Add(1)
 
 	rs.triggerLock.Lock()
@@ -358,7 +358,7 @@ func (rs *StateV3) CommitTxNum(sender *common.Address, txNum uint64, in *exec22.
 }
 
 // 根据 txTask 记录 将 state prev  和 code prev  写入 agg
-func (rs *StateV3) writeStateHistory(roTx kv.Tx, txTask *exec22.TxTask, agg *libstate.AggregatorV3) error {
+func (rs *StateV3) writeStateHistory(roTx kv.Tx, txTask *task.TxTask, agg *libstate.AggregatorV3) error {
 	rs.lock.RLock()
 	defer rs.lock.RUnlock()
 
@@ -468,7 +468,7 @@ func (rs *StateV3) writeStateHistory(roTx kv.Tx, txTask *exec22.TxTask, agg *lib
 }
 
 // for range txTask.balanceIncreasSet， 更新 rs.state 和 agg.account， 及 rs.writelists  ， 线程安全
-func (rs *StateV3) applyState(roTx kv.Tx, txTask *exec22.TxTask, agg *libstate.AggregatorV3) error {
+func (rs *StateV3) applyState(roTx kv.Tx, txTask *task.TxTask, agg *libstate.AggregatorV3) error {
 	emptyRemoval := txTask.Rules.IsSpuriousDragon
 	rs.lock.Lock()
 	defer rs.lock.Unlock()
@@ -548,7 +548,7 @@ func (rs *StateV3) applyState(roTx kv.Tx, txTask *exec22.TxTask, agg *libstate.A
 	return nil
 }
 
-func (rs *StateV3) ApplyState(roTx kv.Tx, txTask *exec22.TxTask, agg *libstate.AggregatorV3) error {
+func (rs *StateV3) ApplyState(roTx kv.Tx, txTask *task.TxTask, agg *libstate.AggregatorV3) error {
 	//defer agg.BatchHistoryWriteStart().BatchHistoryWriteEnd()
 	//
 	//agg.SetTxNum(txTask.TxNum)
@@ -566,7 +566,7 @@ func (rs *StateV3) ApplyState(roTx kv.Tx, txTask *exec22.TxTask, agg *libstate.A
 	return nil
 }
 
-func (rs *StateV3) ApplyHistory(txTask *exec22.TxTask, agg *libstate.AggregatorV3) error {
+func (rs *StateV3) ApplyHistory(txTask *task.TxTask, agg *libstate.AggregatorV3) error {
 	if dbg.DiscardHistory() {
 		return nil
 	}
@@ -715,7 +715,7 @@ func (rs *StateV3) SizeEstimate() (r uint64) {
 }
 
 // 验证 readlist 是否和 rs.state 一致
-func (rs *StateV3) ReadsValid(readLists map[string]*exec22.KvList) bool {
+func (rs *StateV3) ReadsValid(readLists map[string]*task.KvList) bool {
 	rs.lock.RLock()
 	defer rs.lock.RUnlock()
 	for table, list := range readLists {
@@ -745,7 +745,7 @@ func (rs *StateV3) ReadsValid(readLists map[string]*exec22.KvList) bool {
 	return true
 }
 
-func (rs *StateV3) readsValidMap(table string, list *exec22.KvList, m map[string][]byte) bool {
+func (rs *StateV3) readsValidMap(table string, list *task.KvList, m map[string][]byte) bool {
 	switch table {
 	case CodeSizeTable:
 		for i, key := range list.Keys {
@@ -767,7 +767,7 @@ func (rs *StateV3) readsValidMap(table string, list *exec22.KvList, m map[string
 	return true
 }
 
-func (rs *StateV3) readsValidBtree(table string, list *exec22.KvList, m *btree2.Map[string, []byte]) bool {
+func (rs *StateV3) readsValidBtree(table string, list *task.KvList, m *btree2.Map[string, []byte]) bool {
 	for i, key := range list.Keys {
 		if val, ok := m.Get(key); ok {
 			if !bytes.Equal(list.Vals[i], val) {
@@ -781,7 +781,7 @@ func (rs *StateV3) readsValidBtree(table string, list *exec22.KvList, m *btree2.
 type StateWriterV3 struct {
 	rs           *StateV3
 	txNum        uint64
-	writeLists   map[string]*exec22.KvList
+	writeLists   map[string]*task.KvList
 	accountPrevs map[string][]byte
 	accountDels  map[string]*accounts.Account
 	storagePrevs map[string][]byte
@@ -835,7 +835,7 @@ func (w *StateWriterV3) ResetWriteSet() {
 	w.codePrevs = nil
 }
 
-func (w *StateWriterV3) WriteSet() map[string]*exec22.KvList {
+func (w *StateWriterV3) WriteSet() map[string]*task.KvList {
 	return w.writeLists
 }
 
@@ -954,7 +954,7 @@ type StateReaderV3 struct {
 	composite []byte
 
 	discardReadList bool
-	readLists       map[string]*exec22.KvList
+	readLists       map[string]*task.KvList
 }
 
 func NewStateReaderV3(rs *StateV3) *StateReaderV3 {
@@ -967,7 +967,7 @@ func NewStateReaderV3(rs *StateV3) *StateReaderV3 {
 func (r *StateReaderV3) DiscardReadList()                   { r.discardReadList = true }
 func (r *StateReaderV3) SetTxNum(txNum uint64)              { r.txNum = txNum }
 func (r *StateReaderV3) SetTx(tx kv.Tx)                     { r.tx = tx }
-func (r *StateReaderV3) ReadSet() map[string]*exec22.KvList { return r.readLists }
+func (r *StateReaderV3) ReadSet() map[string]*task.KvList { return r.readLists }
 func (r *StateReaderV3) SetTrace(trace bool)                { r.trace = trace }
 func (r *StateReaderV3) ResetReadSet()                      { r.readLists = newReadList() }
 
@@ -1091,7 +1091,7 @@ func (r *StateReaderV3) ReadAccountIncarnation(address common.Address) (uint64, 
 
 var writeListPool = sync.Pool{
 	New: func() any {
-		return map[string]*exec22.KvList{
+		return map[string]*task.KvList{
 			kv.PlainState:        {},
 			StorageTable:         {},
 			kv.Code:              {},
@@ -1101,14 +1101,14 @@ var writeListPool = sync.Pool{
 	},
 }
 
-func newWriteList() map[string]*exec22.KvList {
-	v := writeListPool.Get().(map[string]*exec22.KvList)
+func newWriteList() map[string]*task.KvList {
+	v := writeListPool.Get().(map[string]*task.KvList)
 	for _, tbl := range v {
 		tbl.Keys, tbl.Vals = tbl.Keys[:0], tbl.Vals[:0]
 	}
 	return v
 }
-func returnWriteList(v map[string]*exec22.KvList) {
+func returnWriteList(v map[string]*task.KvList) {
 	if v == nil {
 		return
 	}
@@ -1117,7 +1117,7 @@ func returnWriteList(v map[string]*exec22.KvList) {
 
 var readListPool = sync.Pool{
 	New: func() any {
-		return map[string]*exec22.KvList{
+		return map[string]*task.KvList{
 			kv.PlainState:     {},
 			kv.Code:           {},
 			CodeSizeTable:     {},
@@ -1127,15 +1127,15 @@ var readListPool = sync.Pool{
 	},
 }
 
-func newReadList() map[string]*exec22.KvList {
-	v := readListPool.Get().(map[string]*exec22.KvList)
+func newReadList() map[string]*task.KvList {
+	v := readListPool.Get().(map[string]*task.KvList)
 	for _, tbl := range v {
 		tbl.Keys, tbl.Vals = tbl.Keys[:0], tbl.Vals[:0]
 	}
 	return v
 }
 
-func returnReadList(v map[string]*exec22.KvList) {
+func returnReadList(v map[string]*task.KvList) {
 	if v == nil {
 		return
 	}

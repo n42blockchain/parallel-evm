@@ -9,16 +9,16 @@ import (
 	"starlink-world/erigon-evm/core/rawdb"
 	"starlink-world/erigon-evm/core/types"
 	"starlink-world/erigon-evm/log"
-	"starlink-world/erigon-evm/turbo/services"
+	"starlink-world/erigon-evm/interfaces"
 )
 
 type ChainReaderImpl struct {
 	config      *chain.Config
 	tx          kv.Getter
-	blockReader services.FullBlockReader
+	blockReader interfaces.FullBlockReader
 }
 
-func NewChainReaderImpl(config *chain.Config, tx kv.Getter, blockReader services.FullBlockReader) *ChainReaderImpl {
+func NewChainReaderImpl(config *chain.Config, tx kv.Getter, blockReader interfaces.FullBlockReader) *ChainReaderImpl {
 	return &ChainReaderImpl{config, tx, blockReader}
 }
 

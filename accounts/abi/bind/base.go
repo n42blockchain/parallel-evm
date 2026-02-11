@@ -21,7 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"starlink-world/erigon-evm/ifs"
+	ethereum "starlink-world/erigon-evm/interfaces"
 
 	"github.com/holiman/uint256"
 

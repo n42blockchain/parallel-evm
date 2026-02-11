@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"starlink-world/erigon-evm/common"
-	common2 "starlink-world/erigon-evm/common2"
 	"starlink-world/erigon-evm/consensus"
 	"starlink-world/erigon-evm/core"
 	"starlink-world/erigon-evm/core/rawdb"
@@ -30,7 +29,7 @@ import (
 	"starlink-world/erigon-evm/ethdb/olddb"
 	"starlink-world/erigon-evm/ethdb/prune"
 	"starlink-world/erigon-evm/log"
-	"starlink-world/erigon-evm/turbo/services"
+	"starlink-world/erigon-evm/interfaces"
 	"starlink-world/erigon-evm/turbo/shards"
 	"starlink-world/erigon-evm/turbo/snapshotsync"
 	"sync"
@@ -67,7 +66,7 @@ type ExecuteBlockCfg struct {
 	badBlockHalt  bool
 	stateStream   bool
 	accumulator   *shards.Accumulator
-	blockReader   services.FullBlockReader
+	blockReader   interfaces.FullBlockReader
 	hd            headerDownloader
 
 	dirs      datadir.Dirs
@@ -91,7 +90,7 @@ func StageExecuteBlocksCfg(
 
 	historyV3 bool,
 	dirs datadir.Dirs,
-	blockReader services.FullBlockReader,
+	blockReader interfaces.FullBlockReader,
 	hd headerDownloader,
 	genesis *types.Genesis,
 	syncCfg ethconfig.Sync,
@@ -608,7 +607,7 @@ func SpawnExecuteBlocksStageS(toBlock uint64, ctx context.Context, cfg ExecuteBl
 	//}
 
 	for blockNum := startBlock; blockNum <= to; blockNum++ {
-		if stoppedErr = common2.Stopped(quit); stoppedErr != nil {
+		if stoppedErr = common.Stopped(quit); stoppedErr != nil {
 			break
 		}
 
@@ -667,7 +666,7 @@ func logProgress(logPrefix string, prevBlock uint64, prevTime time.Time, current
 	speedMgas := float64(gas) / 1_000_000 / (float64(interval) / float64(time.Second))
 
 	var m runtime.MemStats
-	common2.ReadMemStats(&m)
+	common.ReadMemStats(&m)
 	var logpairs = []interface{}{
 		"number", currentBlock,
 		"blk/s", fmt.Sprintf("%.1f", speed),
@@ -679,9 +678,9 @@ func logProgress(logPrefix string, prevBlock uint64, prevTime time.Time, current
 		logpairs = append(logpairs, "estimated duration", estimatedTime)
 	}
 	if batch != nil {
-		logpairs = append(logpairs, "batch", common2.ByteCount(uint64(batch.BatchSize())))
+		logpairs = append(logpairs, "batch", common.ByteCount(uint64(batch.BatchSize())))
 	}
-	logpairs = append(logpairs, "alloc", common2.ByteCount(m.Alloc), "sys", common2.ByteCount(m.Sys))
+	logpairs = append(logpairs, "alloc", common.ByteCount(m.Alloc), "sys", common.ByteCount(m.Sys))
 	log.Info(fmt.Sprintf("[%s] Executed blocks", logPrefix), logpairs...)
 
 	return currentBlock, currentTx, currentTime

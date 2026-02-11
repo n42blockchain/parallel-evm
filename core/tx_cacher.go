@@ -20,7 +20,7 @@ import (
 	"sync"
 
 	"starlink-world/erigon-evm/common/debug"
-	libcommon "starlink-world/erigon-evm/common2"
+	libcommon "starlink-world/erigon-evm/common"
 	"starlink-world/erigon-evm/core/types"
 )
 

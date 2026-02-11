@@ -30,7 +30,7 @@ import (
 	"reflect"
 	"starlink-world/erigon-evm/common"
 	"starlink-world/erigon-evm/common/hexutil"
-	rlp2 "starlink-world/erigon-evm/common2/rlp"
+	rlp2 "starlink-world/erigon-evm/common/rlp2"
 	"starlink-world/erigon-evm/rlp"
 	"starlink-world/erigon-evm/verkle"
 	"sync/atomic"

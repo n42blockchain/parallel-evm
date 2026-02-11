@@ -28,7 +28,6 @@ import (
 	"github.com/ledgerwatch/erigon-lib/kv/kvcfg"
 	"math"
 	"math/big"
-	common2 "starlink-world/erigon-evm/common2"
 	"starlink-world/erigon-evm/log"
 	"time"
 
@@ -1677,7 +1676,7 @@ func PruneTable(tx kv.RwTx, table string, pruneTo uint64, ctx context.Context, l
 		}
 		select {
 		case <-ctx.Done():
-			return common2.ErrStopped
+			return common.ErrStopped
 		default:
 		}
 		if err = c.DeleteCurrent(); err != nil {
@@ -1706,7 +1705,7 @@ func PruneTableDupSort(tx kv.RwTx, table string, logPrefix string, pruneTo uint6
 		case <-logEvery.C:
 			log.Info(fmt.Sprintf("[%s]", logPrefix), "table", table, "block", blockNum)
 		case <-ctx.Done():
-			return common2.ErrStopped
+			return common.ErrStopped
 		default:
 		}
 		if err = c.DeleteCurrentDuplicates(); err != nil {

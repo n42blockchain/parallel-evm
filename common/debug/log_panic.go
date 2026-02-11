@@ -2,7 +2,6 @@ package debug
 
 import (
 	"os"
-	"starlink-world/erigon-evm/common2/dbg"
 	"starlink-world/erigon-evm/log"
 	"syscall"
 )
@@ -20,7 +19,7 @@ func LogPanic() {
 		return
 	}
 
-	log.Error("catch panic", "err", panicResult, "stack", dbg.Stack())
+	log.Error("catch panic", "err", panicResult, "stack", Stack())
 	if sigc != nil {
 		sigc <- syscall.SIGINT
 	}

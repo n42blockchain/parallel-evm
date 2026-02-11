@@ -3,7 +3,7 @@ package debug
 import (
 	"fmt"
 	"runtime"
-	common "starlink-world/erigon-evm/common2"
+	"starlink-world/erigon-evm/common"
 )
 
 func PrintMemStats(short bool) {
